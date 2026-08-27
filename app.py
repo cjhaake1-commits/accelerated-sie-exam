@@ -2,78 +2,43 @@ import random
 import streamlit as st
 from curriculum import CHAPTERS, BLOCKS, SECTION_CHAPTERS, SECTION_WEIGHTS
 from math_cards import MATH_CARDS
+from finra_style_engine import build_pool
 
 st.set_page_config(page_title="Accelerated SIE Exam", page_icon="🎯", layout="wide")
 st.markdown("""<style>.block-container{max-width:1200px;padding-top:1.2rem}.hero{padding:1.4rem;border-radius:18px;background:linear-gradient(135deg,#101827,#1e3a5f);color:white;margin-bottom:1rem}.big{font-size:2.1rem;font-weight:800}.muted{opacity:.8}</style>""",unsafe_allow_html=True)
 
-DEFAULTS={
-    "study_block":1,"math_idx":0,"chapter_idx":1,"chapter_card_idx":0,
-    "chapter_quiz":[],"chapter_answers":{},"chapter_submitted":False,"chapter_attempt":0,"active_quiz_chapter":None,
-    "block_exam":[],"block_answers":{},"block_submitted":False,"block_attempt":0,"active_test_block":None,
-    "full_exam":[],"full_answers":{},"full_submitted":False,"full_attempt":0,"history":[]
-}
+DEFAULTS={"study_block":1,"math_idx":0,"chapter_idx":1,"chapter_card_idx":0,"chapter_quiz":[],"chapter_answers":{},"chapter_submitted":False,"chapter_attempt":0,"active_quiz_chapter":None,"block_exam":[],"block_answers":{},"block_submitted":False,"block_attempt":0,"active_test_block":None,"full_exam":[],"full_answers":{},"full_submitted":False,"full_attempt":0,"history":[]}
 for k,v in DEFAULTS.items():
     if k not in st.session_state: st.session_state[k]=v
 
-def close_distractors(ch, term, definition):
-    pool=[]
-    for n in range(max(1,ch-2), min(20,ch+2)+1):
-        for t,d in CHAPTERS[n]["cards"]:
-            if t!=term and d!=definition: pool.append(d)
-    pool=list(dict.fromkeys(pool))
-    if len(pool)<3: pool=[d for x in CHAPTERS.values() for t,d in x["cards"] if t!=term and d!=definition]
-    return random.sample(pool,3)
-
-def make_question(ch, card, variant=0):
-    term,definition=card
-    choices=[definition]+close_distractors(ch,term,definition)
-    random.shuffle(choices)
-    stems=[
-        f"Which statement most accurately describes {term}?",
-        f"A registered representative is reviewing {term}. Which statement is most accurate?",
-        f"Which of the following best applies to {term}?",
-        f"A customer asks about {term}. Which response is most accurate?",
-        f"Which statement concerning {term} is TRUE?",
-        f"Which characteristic is most closely associated with {term}?",
-        f"Which statement would BEST distinguish {term} from a closely related concept?",
-        f"In an SIE-style scenario involving {term}, which statement is most accurate?"
-    ]
-    return {"q":stems[(variant+ch)%len(stems)],"c":choices,"a":definition,"why":definition,"chapter":ch,"term":term,"section":CHAPTERS[ch]["section"]}
-
-def build_pool(chapters,variants=12):
-    return [make_question(ch,card,v+i) for ch in chapters for i,card in enumerate(CHAPTERS[ch]["cards"]) for v in range(variants)]
+def fresh_sample(chapters,n,variants=16):
+    pool=build_pool(chapters,variants)
+    # Avoid duplicate concept+stem combinations within one sitting.
+    random.shuffle(pool); chosen=[]; seen=set()
+    for q in pool:
+        key=(q["term"],q["q"])
+        if key not in seen:
+            chosen.append(q); seen.add(key)
+        if len(chosen)==n: break
+    if len(chosen)<n: chosen.extend(random.sample(pool,n-len(chosen)))
+    random.shuffle(chosen); return chosen
 
 def build_chapter_quiz(ch):
-    st.session_state.chapter_attempt+=1
-    pool=build_pool([ch],14)
-    st.session_state.chapter_quiz=random.sample(pool,20)
-    random.shuffle(st.session_state.chapter_quiz)
-    st.session_state.chapter_answers={}
-    st.session_state.chapter_submitted=False
-    st.session_state.active_quiz_chapter=ch
+    st.session_state.chapter_attempt+=1; st.session_state.chapter_quiz=fresh_sample([ch],20); st.session_state.chapter_answers={}; st.session_state.chapter_submitted=False; st.session_state.active_quiz_chapter=ch
 
 def build_block(block):
-    st.session_state.block_attempt+=1
-    st.session_state.block_exam=random.sample(build_pool(BLOCKS[block]),50)
-    random.shuffle(st.session_state.block_exam)
-    st.session_state.block_answers={}
-    st.session_state.block_submitted=False
-    st.session_state.active_test_block=block
+    st.session_state.block_attempt+=1; st.session_state.block_exam=fresh_sample(BLOCKS[block],50); st.session_state.block_answers={}; st.session_state.block_submitted=False; st.session_state.active_test_block=block
 
 def build_full():
-    st.session_state.full_attempt+=1
-    exam=[]
-    for section,n in SECTION_WEIGHTS.items(): exam.extend(random.sample(build_pool(SECTION_CHAPTERS[section]),n))
-    random.shuffle(exam)
-    st.session_state.full_exam=exam
-    st.session_state.full_answers={}
-    st.session_state.full_submitted=False
+    st.session_state.full_attempt+=1; exam=[]
+    for section,n in SECTION_WEIGHTS.items(): exam.extend(fresh_sample(SECTION_CHAPTERS[section],n))
+    random.shuffle(exam); st.session_state.full_exam=exam; st.session_state.full_answers={}; st.session_state.full_submitted=False
 
 def render_questions(items,answers_key,submitted_key,prefix):
     answers=st.session_state[answers_key]; submitted=st.session_state[submitted_key]
     for i,q in enumerate(items):
         st.markdown(f"**{i+1}. {q['q']}**")
-        val=st.radio("Choose one",q["c"],index=None,key=f"{prefix}_{i}_{q['term']}_{q['q']}",label_visibility="collapsed",disabled=submitted)
+        val=st.radio("Choose one",q["c"],index=None,key=f"{prefix}_{i}_{q['term']}_{hash(q['q'])}",label_visibility="collapsed",disabled=submitted)
         if val is not None: answers[i]=val
         if submitted:
             if answers.get(i)==q["a"]: st.success("Correct — "+q["why"])
@@ -83,70 +48,46 @@ def render_questions(items,answers_key,submitted_key,prefix):
 def score(items,answers): return sum(answers.get(i)==q["a"] for i,q in enumerate(items))
 
 def show_cliffnotes(block):
-    chs=BLOCKS[block]
-    st.subheader(f"Block {block}: Chapters {chs[0]}–{chs[-1]}")
-    st.caption("Finish the five-chapter CliffNotes below, then take the 50-question cumulative test for this block.")
+    chs=BLOCKS[block]; st.subheader(f"Block {block}: Chapters {chs[0]}–{chs[-1]}"); st.caption("Finish the five-chapter CliffNotes below, then take the 50-question cumulative test for this block.")
     for ch in chs:
         with st.expander(f"Chapter {ch}: {CHAPTERS[ch]['title']}",expanded=True):
             for term,definition in CHAPTERS[ch]["cards"]: st.markdown(f"**{term}** — {definition}")
 
-st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">Chapter Flashcards + Fresh 20Q Quiz → Four 5-Chapter CliffNotes Blocks + Fresh 50Q Tests → Math Flashcards → 75Q Full Simulation</div></div>',unsafe_allow_html=True)
+st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">Harder close-choice question engine • Chapter Flashcards + 20Q • Four 50Q Blocks • Math • 75Q Simulation</div></div>',unsafe_allow_html=True)
 with st.sidebar:
-    st.header("SIE Command Center")
-    page=st.radio("Study mode",["Dashboard","Chapter Flashcards + 20Q Quiz","5-Chapter Study Blocks","Math & Formula Flashcards","75-Question Full Test","Review"])
-    st.caption("Training target: consistently score 85%+ before exam day.")
+    st.header("SIE Command Center"); page=st.radio("Study mode",["Dashboard","Chapter Flashcards + 20Q Quiz","5-Chapter Study Blocks","Math & Formula Flashcards","75-Question Full Test","Review"]); st.caption("Training target: consistently score 85%+ before exam day.")
 
 if page=="Dashboard":
-    st.subheader("Course flow")
-    st.write("Each chapter now has its own flashcard deck followed automatically by a 20-question chapter quiz. Every new cycle generates a fresh 20-question set. You still also have four five-chapter cumulative blocks, each ending in a fresh 50-question test, plus the math deck and final 75-question simulation.")
+    st.subheader("Course flow"); st.write("All quizzes and exams now use a harder close-choice engine. Instead of showing one definition with three unrelated answers, the choices are deliberately drawn from closely related concepts in the same topic family. Questions use BEST/MOST and applied identification formats so you must distinguish similar rules, products and terms.")
     for b,chs in BLOCKS.items(): st.info(f"Block {b}: Chapters {chs[0]}–{chs[-1]} CliffNotes → 50-question randomized cumulative test")
 
 elif page=="Chapter Flashcards + 20Q Quiz":
     ch=st.selectbox("Choose chapter",list(CHAPTERS),index=st.session_state.chapter_idx-1,format_func=lambda c:f"Chapter {c}: {CHAPTERS[c]['title']}")
-    if ch!=st.session_state.chapter_idx:
-        st.session_state.chapter_idx=ch
-        st.session_state.chapter_card_idx=0
-        st.session_state.chapter_quiz=[]
-        st.session_state.chapter_answers={}
-        st.session_state.chapter_submitted=False
-        st.session_state.active_quiz_chapter=None
-    cards=CHAPTERS[ch]["cards"]
-    idx=st.session_state.chapter_card_idx%len(cards)
-    term,definition=cards[idx]
-    st.subheader(f"Chapter {ch}: {CHAPTERS[ch]['title']}")
-    st.caption("Cycle through the flashcards first. At the end of the deck, launch a fresh 20-question quiz from this chapter only.")
-    st.markdown(f"## {term}")
+    if ch!=st.session_state.chapter_idx: st.session_state.chapter_idx=ch; st.session_state.chapter_card_idx=0; st.session_state.chapter_quiz=[]; st.session_state.chapter_answers={}; st.session_state.chapter_submitted=False; st.session_state.active_quiz_chapter=None
+    cards=CHAPTERS[ch]["cards"]; idx=st.session_state.chapter_card_idx%len(cards); term,definition=cards[idx]
+    st.subheader(f"Chapter {ch}: {CHAPTERS[ch]['title']}"); st.caption("Study the chapter deck, then use the 20-question checkpoint to distinguish closely related concepts."); st.markdown(f"## {term}")
     if st.toggle("Reveal answer",key=f"chapter_reveal_{ch}_{idx}"): st.success(definition)
     a,b,c=st.columns(3)
     if a.button("⬅ Previous",use_container_width=True): st.session_state.chapter_card_idx=(idx-1)%len(cards); st.rerun()
     if b.button("🔀 Random",use_container_width=True): st.session_state.chapter_card_idx=random.randrange(len(cards)); st.rerun()
     if c.button("Next ➡",use_container_width=True): st.session_state.chapter_card_idx=(idx+1)%len(cards); st.rerun()
-    st.progress((idx+1)/len(cards),text=f"Card {idx+1} of {len(cards)}")
-    if idx==len(cards)-1: st.success("End of chapter flashcards reached. Your 20-question checkpoint is ready below.")
-    st.divider()
-    st.markdown("### 20-Question Chapter Quiz")
-    st.caption("Every time you generate or retake this quiz, the app creates a new randomized 20-question set with rotated stems and shuffled choices.")
+    st.progress((idx+1)/len(cards),text=f"Card {idx+1} of {len(cards)}"); st.divider(); st.markdown("### 20-Question Chapter Quiz")
     if not st.session_state.chapter_quiz or st.session_state.active_quiz_chapter!=ch:
-        if st.button("Start Fresh 20-Question Chapter Quiz",type="primary",use_container_width=True): build_chapter_quiz(ch); st.rerun()
+        if st.button("Start Fresh Harder 20-Question Quiz",type="primary",use_container_width=True): build_chapter_quiz(ch); st.rerun()
     else:
         if st.button("Generate 20 New Questions",use_container_width=True): build_chapter_quiz(ch); st.rerun()
-        st.progress(len(st.session_state.chapter_answers)/20,text=f"Answered {len(st.session_state.chapter_answers)} / 20")
-        render_questions(st.session_state.chapter_quiz,"chapter_answers","chapter_submitted",f"chapter{ch}_{st.session_state.chapter_attempt}")
+        st.progress(len(st.session_state.chapter_answers)/20,text=f"Answered {len(st.session_state.chapter_answers)} / 20"); render_questions(st.session_state.chapter_quiz,"chapter_answers","chapter_submitted",f"chapter{ch}_{st.session_state.chapter_attempt}")
         if not st.session_state.chapter_submitted:
             if st.button("Submit Chapter Quiz",type="primary",use_container_width=True): st.session_state.chapter_submitted=True; st.rerun()
         else:
-            s=score(st.session_state.chapter_quiz,st.session_state.chapter_answers)
-            st.header(f"Chapter {ch} Score: {s}/20 — {s/20*100:.1f}%")
-            if s>=17: st.success("Strong chapter retention.")
-            elif s>=14: st.warning("Passing-range chapter knowledge; review misses before moving on.")
-            else: st.error("Re-run the flashcards, then generate 20 new questions.")
+            s=score(st.session_state.chapter_quiz,st.session_state.chapter_answers); st.header(f"Chapter {ch} Score: {s}/20 — {s/20*100:.1f}%")
 
 elif page=="5-Chapter Study Blocks":
     block=st.selectbox("Choose study block",list(BLOCKS),index=st.session_state.study_block-1,format_func=lambda b:f"Block {b}: Chapters {BLOCKS[b][0]}–{BLOCKS[b][-1]}")
     if block!=st.session_state.study_block: st.session_state.study_block=block; st.session_state.block_exam=[]; st.session_state.block_answers={}; st.session_state.block_submitted=False; st.session_state.active_test_block=None
     show_cliffnotes(block); st.divider(); st.markdown(f"## Chapters {BLOCKS[block][0]}–{BLOCKS[block][-1]} Cumulative Test")
     if not st.session_state.block_exam or st.session_state.active_test_block!=block:
-        if st.button("I Finished the CliffNotes — Generate Fresh 50-Question Test",type="primary",use_container_width=True): build_block(block); st.rerun()
+        if st.button("Generate Fresh Harder 50-Question Test",type="primary",use_container_width=True): build_block(block); st.rerun()
     else:
         if st.button("Generate a Different 50-Question Retake",use_container_width=True): build_block(block); st.rerun()
         st.progress(len(st.session_state.block_answers)/50,text=f"Answered {len(st.session_state.block_answers)} / 50"); render_questions(st.session_state.block_exam,"block_answers","block_submitted",f"b{block}_{st.session_state.block_attempt}")
@@ -156,23 +97,18 @@ elif page=="5-Chapter Study Blocks":
             s=score(st.session_state.block_exam,st.session_state.block_answers); st.header(f"Block {block} Score: {s}/50 — {s/50*100:.1f}%")
 
 elif page=="Math & Formula Flashcards":
-    st.subheader("🧮 SIE Math & Formula Flashcards")
-    idx=st.session_state.math_idx%len(MATH_CARDS); term,answer=MATH_CARDS[idx]
-    st.markdown(f"## {term}")
+    st.subheader("🧮 SIE Math & Formula Flashcards"); idx=st.session_state.math_idx%len(MATH_CARDS); term,answer=MATH_CARDS[idx]; st.markdown(f"## {term}")
     if st.toggle("Reveal formula / rule",key=f"math_reveal_{idx}"): st.success(answer)
     a,b,c=st.columns(3)
     if a.button("⬅ Previous",use_container_width=True): st.session_state.math_idx=(idx-1)%len(MATH_CARDS); st.rerun()
     if b.button("🔀 Random",use_container_width=True): st.session_state.math_idx=random.randrange(len(MATH_CARDS)); st.rerun()
     if c.button("Next ➡",use_container_width=True): st.session_state.math_idx=(idx+1)%len(MATH_CARDS); st.rerun()
     st.progress((idx+1)/len(MATH_CARDS),text=f"Math card {idx+1} of {len(MATH_CARDS)}")
-    with st.expander("Show complete formula sheet"):
-        for t,a in MATH_CARDS: st.markdown(f"**{t}** — {a}")
 
 elif page=="75-Question Full Test":
-    st.subheader("75-Question Full SIE Practice Test")
-    st.caption("Weighted to the SIE blueprint: 12 Capital Markets, 33 Products & Risks, 23 Trading/Accounts/Prohibited Activities, 7 Regulatory Framework.")
+    st.subheader("75-Question Full SIE Practice Test — Hard Mode"); st.caption("Blueprint weighted: 12 Capital Markets, 33 Products & Risks, 23 Trading/Accounts/Prohibited Activities, 7 Regulatory Framework. Choices are intentionally close; this is designed to punish recognition-by-elimination shortcuts.")
     if not st.session_state.full_exam:
-        if st.button("Generate Fresh Full Practice Test",type="primary",use_container_width=True): build_full(); st.rerun()
+        if st.button("Generate Fresh Hard-Mode Full Test",type="primary",use_container_width=True): build_full(); st.rerun()
     else:
         if st.button("Generate a Different 75-Question Retake",use_container_width=True): build_full(); st.rerun()
         st.progress(len(st.session_state.full_answers)/75,text=f"Answered {len(st.session_state.full_answers)} / 75"); render_questions(st.session_state.full_exam,"full_answers","full_submitted",f"full{st.session_state.full_attempt}")
@@ -186,4 +122,4 @@ elif page=="Review":
     if st.session_state.history: st.line_chart(st.session_state.history)
     else: st.info("Submit a full practice test to begin tracking performance.")
 
-st.divider(); st.caption("Original training questions and paraphrased study content aligned to the uploaded STC SIE manual. Questions are not copied from or represented as live FINRA exam questions.")
+st.divider(); st.caption("Original training questions grounded in the uploaded SIE curriculum. FINRA's public practice-test approach is used only as a benchmark for multiple-choice rigor and close distractors; questions are not copied from or represented as FINRA exam questions.")
