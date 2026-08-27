@@ -3,22 +3,20 @@ import streamlit as st
 from curriculum import CHAPTERS, BLOCKS, SECTION_CHAPTERS, SECTION_WEIGHTS
 from math_cards import MATH_CARDS
 from finra_style_engine import build_pool
+from study_lessons import LESSONS
 
 st.set_page_config(page_title="Accelerated SIE Exam", page_icon="🎯", layout="wide")
-st.markdown("""<style>.block-container{max-width:1200px;padding-top:1.2rem}.hero{padding:1.4rem;border-radius:18px;background:linear-gradient(135deg,#101827,#1e3a5f);color:white;margin-bottom:1rem}.big{font-size:2.1rem;font-weight:800}.muted{opacity:.8}</style>""",unsafe_allow_html=True)
+st.markdown("""<style>.block-container{max-width:1200px;padding-top:1.2rem}.hero{padding:1.4rem;border-radius:18px;background:linear-gradient(135deg,#101827,#1e3a5f);color:white;margin-bottom:1rem}.big{font-size:2.1rem;font-weight:800}.muted{opacity:.8}.lesson{padding:1rem;border:1px solid #d5dbe5;border-radius:12px;margin:.5rem 0}</style>""",unsafe_allow_html=True)
 
 DEFAULTS={"study_block":1,"math_idx":0,"chapter_idx":1,"chapter_card_idx":0,"chapter_quiz":[],"chapter_answers":{},"chapter_submitted":False,"chapter_attempt":0,"active_quiz_chapter":None,"block_exam":[],"block_answers":{},"block_submitted":False,"block_attempt":0,"active_test_block":None,"full_exam":[],"full_answers":{},"full_submitted":False,"full_attempt":0,"history":[]}
 for k,v in DEFAULTS.items():
     if k not in st.session_state: st.session_state[k]=v
 
 def fresh_sample(chapters,n,variants=16):
-    pool=build_pool(chapters,variants)
-    # Avoid duplicate concept+stem combinations within one sitting.
-    random.shuffle(pool); chosen=[]; seen=set()
+    pool=build_pool(chapters,variants); random.shuffle(pool); chosen=[]; seen=set()
     for q in pool:
         key=(q["term"],q["q"])
-        if key not in seen:
-            chosen.append(q); seen.add(key)
+        if key not in seen: chosen.append(q); seen.add(key)
         if len(chosen)==n: break
     if len(chosen)<n: chosen.extend(random.sample(pool,n-len(chosen)))
     random.shuffle(chosen); return chosen
@@ -48,24 +46,36 @@ def render_questions(items,answers_key,submitted_key,prefix):
 def score(items,answers): return sum(answers.get(i)==q["a"] for i,q in enumerate(items))
 
 def show_cliffnotes(block):
-    chs=BLOCKS[block]; st.subheader(f"Block {block}: Chapters {chs[0]}–{chs[-1]}"); st.caption("Finish the five-chapter CliffNotes below, then take the 50-question cumulative test for this block.")
+    chs=BLOCKS[block]
+    st.subheader(f"Block {block}: Chapters {chs[0]}–{chs[-1]}")
+    st.caption("These are understanding-first CliffNotes, not flashcards. Read the rationale, contrasts and exam traps, then take the 50-question cumulative test.")
     for ch in chs:
+        lesson=LESSONS[ch]
         with st.expander(f"Chapter {ch}: {CHAPTERS[ch]['title']}",expanded=True):
-            for term,definition in CHAPTERS[ch]["cards"]: st.markdown(f"**{term}** — {definition}")
+            st.markdown("### The big idea")
+            st.info(lesson["big"])
+            st.markdown("### Understand the WHY")
+            for x in lesson["why"]: st.markdown(f"- {x}")
+            st.markdown("### FINRA-style distinctions & traps")
+            for x in lesson["traps"]: st.markdown(f"- ⚠️ {x}")
+            st.markdown("### How to reason through a question")
+            st.success(lesson["apply"])
+            with st.expander("Quick-reference terms (use only after understanding the lesson)"):
+                for term,definition in CHAPTERS[ch]["cards"]: st.markdown(f"**{term}** — {definition}")
 
-st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">Harder close-choice question engine • Chapter Flashcards + 20Q • Four 50Q Blocks • Math • 75Q Simulation</div></div>',unsafe_allow_html=True)
+st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">Understand → Distinguish → Apply → Test • Chapter Flashcards + 20Q • Four Deep-Learning Blocks + 50Q • Math • 75Q Simulation</div></div>',unsafe_allow_html=True)
 with st.sidebar:
     st.header("SIE Command Center"); page=st.radio("Study mode",["Dashboard","Chapter Flashcards + 20Q Quiz","5-Chapter Study Blocks","Math & Formula Flashcards","75-Question Full Test","Review"]); st.caption("Training target: consistently score 85%+ before exam day.")
 
 if page=="Dashboard":
-    st.subheader("Course flow"); st.write("All quizzes and exams now use a harder close-choice engine. Instead of showing one definition with three unrelated answers, the choices are deliberately drawn from closely related concepts in the same topic family. Questions use BEST/MOST and applied identification formats so you must distinguish similar rules, products and terms.")
-    for b,chs in BLOCKS.items(): st.info(f"Block {b}: Chapters {chs[0]}–{chs[-1]} CliffNotes → 50-question randomized cumulative test")
+    st.subheader("Course flow"); st.write("The five-chapter blocks now teach rationale and relationships rather than repeating flashcard definitions. Each chapter explains the big idea, why the rules/products work the way they do, commonly confused concepts, exam traps, and a reasoning method. Flashcards remain separate for memorization.")
+    for b,chs in BLOCKS.items(): st.info(f"Block {b}: Chapters {chs[0]}–{chs[-1]} understanding-first lessons → 50-question randomized cumulative test")
 
 elif page=="Chapter Flashcards + 20Q Quiz":
     ch=st.selectbox("Choose chapter",list(CHAPTERS),index=st.session_state.chapter_idx-1,format_func=lambda c:f"Chapter {c}: {CHAPTERS[c]['title']}")
     if ch!=st.session_state.chapter_idx: st.session_state.chapter_idx=ch; st.session_state.chapter_card_idx=0; st.session_state.chapter_quiz=[]; st.session_state.chapter_answers={}; st.session_state.chapter_submitted=False; st.session_state.active_quiz_chapter=None
     cards=CHAPTERS[ch]["cards"]; idx=st.session_state.chapter_card_idx%len(cards); term,definition=cards[idx]
-    st.subheader(f"Chapter {ch}: {CHAPTERS[ch]['title']}"); st.caption("Study the chapter deck, then use the 20-question checkpoint to distinguish closely related concepts."); st.markdown(f"## {term}")
+    st.subheader(f"Chapter {ch}: {CHAPTERS[ch]['title']}"); st.caption("Flashcards are deliberately concise for memorization. Use the 5-Chapter Study Blocks for deeper rationale and understanding."); st.markdown(f"## {term}")
     if st.toggle("Reveal answer",key=f"chapter_reveal_{ch}_{idx}"): st.success(definition)
     a,b,c=st.columns(3)
     if a.button("⬅ Previous",use_container_width=True): st.session_state.chapter_card_idx=(idx-1)%len(cards); st.rerun()
@@ -87,7 +97,7 @@ elif page=="5-Chapter Study Blocks":
     if block!=st.session_state.study_block: st.session_state.study_block=block; st.session_state.block_exam=[]; st.session_state.block_answers={}; st.session_state.block_submitted=False; st.session_state.active_test_block=None
     show_cliffnotes(block); st.divider(); st.markdown(f"## Chapters {BLOCKS[block][0]}–{BLOCKS[block][-1]} Cumulative Test")
     if not st.session_state.block_exam or st.session_state.active_test_block!=block:
-        if st.button("Generate Fresh Harder 50-Question Test",type="primary",use_container_width=True): build_block(block); st.rerun()
+        if st.button("I Understand the Block — Generate Fresh Harder 50-Question Test",type="primary",use_container_width=True): build_block(block); st.rerun()
     else:
         if st.button("Generate a Different 50-Question Retake",use_container_width=True): build_block(block); st.rerun()
         st.progress(len(st.session_state.block_answers)/50,text=f"Answered {len(st.session_state.block_answers)} / 50"); render_questions(st.session_state.block_exam,"block_answers","block_submitted",f"b{block}_{st.session_state.block_attempt}")
@@ -122,4 +132,4 @@ elif page=="Review":
     if st.session_state.history: st.line_chart(st.session_state.history)
     else: st.info("Submit a full practice test to begin tracking performance.")
 
-st.divider(); st.caption("Original training questions grounded in the uploaded SIE curriculum. FINRA's public practice-test approach is used only as a benchmark for multiple-choice rigor and close distractors; questions are not copied from or represented as FINRA exam questions.")
+st.divider(); st.caption("Study lessons are original paraphrases grounded in the uploaded SIE manual. The block lessons emphasize the manual's tested relationships and distinctions; flashcards remain the separate memorization layer.")
