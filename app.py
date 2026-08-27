@@ -1,174 +1,142 @@
 import random
 import streamlit as st
-from question_bank import QUESTION_FAMILIES, FLASHCARDS, CLIFF_NOTES
+from curriculum import CHAPTERS, BLOCKS, SECTION_CHAPTERS, SECTION_WEIGHTS
 
 st.set_page_config(page_title="Accelerated SIE Exam", page_icon="🎯", layout="wide")
+st.markdown("""<style>.block-container{max-width:1200px;padding-top:1.2rem}.hero{padding:1.4rem;border-radius:18px;background:linear-gradient(135deg,#101827,#1e3a5f);color:white;margin-bottom:1rem}.big{font-size:2.1rem;font-weight:800}.muted{opacity:.8}</style>""",unsafe_allow_html=True)
 
-# FINRA's scored outline weighting: 12 / 33 / 23 / 7 = 75 scored questions.
-DOMAIN_ORDER = [
-    ("Capital Markets", 12),
-    ("Products & Risks", 33),
-    ("Trading, Accounts & Prohibited Activities", 23),
-    ("Regulatory Framework", 7),
-]
+for k,v in {"fc":0,"chapter":1,"quiz":[],"quiz_answers":{},"quiz_submitted":False,"block_exam":[],"block_answers":{},"block_submitted":False,"block_attempt":0,"full_exam":[],"full_answers":{},"full_submitted":False,"full_attempt":0,"history":[]}.items():
+    if k not in st.session_state: st.session_state[k]=v
 
-st.markdown("""
-<style>
-.block-container{max-width:1200px;padding-top:1.4rem}.hero{padding:1.5rem;border-radius:18px;background:linear-gradient(135deg,#101827,#1e3a5f);color:white;margin-bottom:1rem}.pill{display:inline-block;padding:.25rem .6rem;border-radius:999px;background:#eef2ff;margin:.15rem;font-size:.85rem}.big{font-size:2.2rem;font-weight:800}.muted{opacity:.78}.card{border:1px solid rgba(128,128,128,.25);border-radius:14px;padding:1rem;margin:.5rem 0}
-</style>
-""", unsafe_allow_html=True)
+def make_question(ch, card, variant=0):
+    term, definition = card
+    others=[c[1] for n,x in CHAPTERS.items() for c in x["cards"] if c[0]!=term]
+    distractors=random.sample(others,3)
+    choices=[definition]+distractors; random.shuffle(choices)
+    stems=[f"Which description most accurately defines {term}?",f"A question on Chapter {ch} refers to {term}. Which statement is the best match?",f"Which statement about {term} is most accurate?"]
+    return {"q":stems[variant%len(stems)],"c":choices,"a":definition,"why":definition,"chapter":ch,"term":term,"section":CHAPTERS[ch]["section"]}
 
-if "attempt" not in st.session_state: st.session_state.attempt = 0
-if "exam" not in st.session_state: st.session_state.exam = []
-if "answers" not in st.session_state: st.session_state.answers = {}
-if "submitted" not in st.session_state: st.session_state.submitted = False
-if "history" not in st.session_state: st.session_state.history = []
-if "fc" not in st.session_state: st.session_state.fc = 0
+def build_pool(chapters, variants=4):
+    pool=[]
+    for ch in chapters:
+        for i,card in enumerate(CHAPTERS[ch]["cards"]):
+            for v in range(variants): pool.append(make_question(ch,card,v+i))
+    return pool
 
+def fresh_sample(pool,n,seed_shift=0):
+    picks=random.sample(pool,min(n,len(pool)))
+    random.shuffle(picks)
+    return picks
 
-def build_exam():
-    """Build a 75-question exam matching FINRA scored-domain weights.
-    Every new attempt alternates to the other stem in every question family,
-    guaranteeing 100% of question stems differ from the immediately prior exam.
-    Choices are also reshuffled independently.
-    """
-    st.session_state.attempt += 1
-    stem_key = "q1" if st.session_state.attempt % 2 else "q2"
-    exam = []
-    for domain, count in DOMAIN_ORDER:
-        pool = [x for x in QUESTION_FAMILIES if x["d"] == domain]
-        chosen = random.sample(pool, count)
-        for item in chosen:
-            choices = item["c"].copy()
-            random.shuffle(choices)
-            exam.append({"q": item[stem_key], "c": choices, "a": item["a"], "d": item["d"], "e": item["e"]})
+def render_questions(items, answers_key, submitted_key, prefix):
+    answers=st.session_state[answers_key]
+    submitted=st.session_state[submitted_key]
+    for i,q in enumerate(items):
+        st.markdown(f"**{i+1}. {q['q']}**")
+        val=st.radio("Choose one",q["c"],index=None,key=f"{prefix}_{i}_{q['term']}_{q['q']}",label_visibility="collapsed",disabled=submitted)
+        if val is not None: answers[i]=val
+        if submitted:
+            if answers.get(i)==q["a"]: st.success("Correct — "+q["why"])
+            else: st.error("Correct answer: "+q["a"]+" — "+q["why"])
+        st.divider()
+
+def score(items,answers):
+    return sum(answers.get(i)==q["a"] for i,q in enumerate(items))
+
+def build_chapter_quiz(ch):
+    pool=build_pool([ch],5)
+    st.session_state.quiz=fresh_sample(pool,20)
+    st.session_state.quiz_answers={}; st.session_state.quiz_submitted=False
+
+def build_block(block):
+    st.session_state.block_attempt+=1
+    pool=build_pool(BLOCKS[block],6)
+    st.session_state.block_exam=fresh_sample(pool,50)
+    st.session_state.block_answers={}; st.session_state.block_submitted=False
+
+def build_full():
+    st.session_state.full_attempt+=1
+    exam=[]
+    for section,n in SECTION_WEIGHTS.items():
+        pool=build_pool(SECTION_CHAPTERS[section],6)
+        exam.extend(random.sample(pool,n))
     random.shuffle(exam)
-    st.session_state.exam = exam
-    st.session_state.answers = {}
-    st.session_state.submitted = False
+    st.session_state.full_exam=exam
+    st.session_state.full_answers={}; st.session_state.full_submitted=False
 
-
-def grade_exam():
-    exam = st.session_state.exam
-    correct = sum(st.session_state.answers.get(i) == q["a"] for i, q in enumerate(exam))
-    pct = round(correct / len(exam) * 100, 1)
-    by_domain = {}
-    for domain, _ in DOMAIN_ORDER:
-        idxs = [i for i,q in enumerate(exam) if q["d"] == domain]
-        hits = sum(st.session_state.answers.get(i) == exam[i]["a"] for i in idxs)
-        by_domain[domain] = round(hits / len(idxs) * 100, 1) if idxs else 0
-    st.session_state.history.append({"attempt":st.session_state.attempt,"score":pct,**by_domain})
-    st.session_state.submitted = True
-
-
-st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">CliffNotes → Flashcards → Targeted Practice → Full Simulation → Remediation → Pass Readiness</div></div>', unsafe_allow_html=True)
-
+st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">20 Chapters → Flashcards + Chapter Quizzes → Four 5-Chapter Exams → 75-Question Full Simulation</div></div>',unsafe_allow_html=True)
 with st.sidebar:
     st.header("SIE Command Center")
-    page = st.radio("Study mode", ["Dashboard","CliffNotes","Flashcards","Practice Exam","Rapid Drill","Exam Review"])
-    st.divider()
-    st.caption("Full simulation: 75 scored-style questions")
-    st.caption("Target: 70% to pass; train toward 85%+ for margin.")
-    st.caption("Question stems rotate 100% between consecutive full attempts.")
+    page=st.radio("Study mode",["Dashboard","Chapter Flashcards","5-Chapter Tests","Full Practice Test","Review"])
+    st.caption("Training target: consistently score 85%+ before exam day.")
 
-if page == "Dashboard":
-    st.subheader("Your fastest path")
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Capital Markets","12 / 75")
-    c2.metric("Products & Risks","33 / 75")
-    c3.metric("Trading / Accounts","23 / 75")
-    c4.metric("Regulatory","7 / 75")
-    st.info("Priority rule: Products & Risks + Trading/Accounts/Prohibited Activities = 56 of the 75 scored questions. Spend most of your time there, while memorizing high-yield regulatory numbers, Acts, account rules and option/bond relationships.")
-    st.markdown("### Recommended cycle")
-    st.markdown("**1. CliffNotes (20–30 min)** → **2. Flashcards (15 min)** → **3. Rapid Drill (20 min)** → **4. Full Exam (105 min max)** → **5. Review every miss**")
-    if st.session_state.history:
-        last=st.session_state.history[-1]
-        st.metric("Latest full-exam score", f"{last['score']}%", "READY" if last['score']>=85 else "Keep training")
-        st.dataframe(st.session_state.history, use_container_width=True, hide_index=True)
+if page=="Dashboard":
+    st.subheader("Course structure")
+    st.write("Study all 20 chapters from the complete manual. Each chapter has its own flashcard deck followed by a 20-question checkpoint. Every five chapters culminate in a 50-question randomized cumulative test. Finish with a 75-question simulation weighted 12 / 33 / 23 / 7 across the four SIE content areas.")
+    for b,chs in BLOCKS.items(): st.info(f"Block {b}: Chapters {chs[0]}–{chs[-1]} → 50-question randomized test")
+    st.warning("Question design deliberately uses plausible distractors and shuffled answer positions. Do not memorize answer location; learn why each choice is right or wrong.")
 
-elif page == "CliffNotes":
-    st.subheader("SIE CliffNotes — high-yield review")
-    st.caption("Condensed around the uploaded STC manual's four SIE content areas and exam weighting.")
-    for domain,_ in DOMAIN_ORDER:
-        with st.expander(domain, expanded=True):
-            for note in CLIFF_NOTES[domain]: st.markdown(f"- {note}")
-    st.warning("Buzzword method: when you see a key phrase, immediately connect it to the rule: 1933→new issue; 1934→secondary/SEC; broker→agent; dealer→principal; rates↑→bond prices↓; call→buy; put→sell; GO→taxes; revenue→project revenue; CIP→identity; CTR→cash >$10k; SIPC→broker failure, not market loss.")
-
-elif page == "Flashcards":
-    st.subheader("Flashcards")
-    idx=st.session_state.fc % len(FLASHCARDS)
-    term,definition=FLASHCARDS[idx]
+elif page=="Chapter Flashcards":
+    ch=st.selectbox("Chapter",list(CHAPTERS),format_func=lambda x:f"Chapter {x}: {CHAPTERS[x]['title']}")
+    if ch!=st.session_state.chapter:
+        st.session_state.chapter=ch; st.session_state.fc=0; st.session_state.quiz=[]; st.session_state.quiz_answers={}; st.session_state.quiz_submitted=False
+    cards=CHAPTERS[ch]["cards"]; idx=st.session_state.fc%len(cards); term,definition=cards[idx]
+    st.subheader(f"Chapter {ch} — {CHAPTERS[ch]['title']}")
     st.markdown(f"### {term}")
-    if st.toggle("Reveal answer", key=f"reveal_{idx}"):
-        st.success(definition)
+    if st.toggle("Reveal answer",key=f"reveal_{ch}_{idx}"): st.success(definition)
     a,b,c=st.columns(3)
-    if a.button("⬅ Previous", use_container_width=True): st.session_state.fc=(idx-1)%len(FLASHCARDS); st.rerun()
-    if b.button("🔀 Random", use_container_width=True): st.session_state.fc=random.randrange(len(FLASHCARDS)); st.rerun()
-    if c.button("Next ➡", use_container_width=True): st.session_state.fc=(idx+1)%len(FLASHCARDS); st.rerun()
-    st.progress((idx+1)/len(FLASHCARDS), text=f"Card {idx+1} of {len(FLASHCARDS)}")
-
-elif page == "Practice Exam":
-    st.subheader("Full SIE Simulation")
-    st.caption("75 questions using the official scored-domain proportions. Each consecutive attempt uses the alternate stem for every question family, so 100% of the question wording changes.")
-    if not st.session_state.exam:
-        if st.button("Start Full Exam", type="primary", use_container_width=True): build_exam(); st.rerun()
+    if a.button("⬅ Previous",use_container_width=True): st.session_state.fc=(idx-1)%len(cards); st.rerun()
+    if b.button("🔀 Random",use_container_width=True): st.session_state.fc=random.randrange(len(cards)); st.rerun()
+    if c.button("Next ➡",use_container_width=True): st.session_state.fc=(idx+1)%len(cards); st.rerun()
+    st.progress((idx+1)/len(cards),text=f"Card {idx+1} of {len(cards)}")
+    st.divider(); st.markdown("### Chapter checkpoint — 20 questions")
+    if not st.session_state.quiz:
+        if st.button("Start 20-Question Chapter Quiz",type="primary",use_container_width=True): build_chapter_quiz(ch); st.rerun()
     else:
-        top1,top2=st.columns([3,1])
-        top1.progress(len(st.session_state.answers)/75, text=f"Answered {len(st.session_state.answers)} / 75")
-        if top2.button("New 100% Fresh Exam", use_container_width=True): build_exam(); st.rerun()
-        for i,q in enumerate(st.session_state.exam):
-            st.markdown(f"**{i+1}. {q['q']}**")
-            val=st.radio("Choose one", q["c"], index=None, key=f"exam_{st.session_state.attempt}_{i}", label_visibility="collapsed", disabled=st.session_state.submitted)
-            if val is not None: st.session_state.answers[i]=val
-            if st.session_state.submitted:
-                if st.session_state.answers.get(i)==q["a"]: st.success(f"Correct — {q['e']}")
-                else: st.error(f"Correct answer: {q['a']} — {q['e']}")
-            st.divider()
-        if not st.session_state.submitted:
-            if st.button("Submit & Grade", type="primary", use_container_width=True): grade_exam(); st.rerun()
+        render_questions(st.session_state.quiz,"quiz_answers","quiz_submitted",f"cq{ch}")
+        if not st.session_state.quiz_submitted:
+            if st.button("Submit Chapter Quiz",type="primary",use_container_width=True): st.session_state.quiz_submitted=True; st.rerun()
         else:
-            correct=sum(st.session_state.answers.get(i)==q["a"] for i,q in enumerate(st.session_state.exam))
-            pct=correct/75*100
-            st.header(f"Score: {correct}/75 — {pct:.1f}%")
-            if pct>=85: st.success("Strong readiness margin. Keep rotating fresh exams until this is repeatable.")
-            elif pct>=70: st.warning("Passing-range performance, but build more margin. Review misses and retest.")
-            else: st.error("Below passing range. Use Exam Review + CliffNotes, then take a fresh exam.")
-            if st.button("Generate Next 100% Fresh Exam", type="primary", use_container_width=True): build_exam(); st.rerun()
+            s=score(st.session_state.quiz,st.session_state.quiz_answers); st.header(f"Chapter score: {s}/20 — {s*5:.0f}%")
+            if st.button("Retake with 20 Randomized Questions",use_container_width=True): build_chapter_quiz(ch); st.rerun()
 
-elif page == "Rapid Drill":
-    st.subheader("Rapid Drill")
-    domain=st.selectbox("Focus area", [x[0] for x in DOMAIN_ORDER]+["Mixed"])
-    n=st.slider("Questions",5,30,10)
-    if st.button("Generate Drill", type="primary"):
-        pool=QUESTION_FAMILIES if domain=="Mixed" else [x for x in QUESTION_FAMILIES if x["d"]==domain]
-        picks=random.sample(pool,min(n,len(pool)))
-        st.session_state.drill=[]
-        for x in picks:
-            stem=random.choice(["q1","q2"]); choices=x["c"].copy(); random.shuffle(choices)
-            st.session_state.drill.append({"q":x[stem],"c":choices,"a":x["a"],"e":x["e"],"d":x["d"]})
-    for i,q in enumerate(st.session_state.get("drill",[])):
-        with st.expander(f"{i+1}. {q['q']}"):
-            ans=st.radio("Answer",q["c"],index=None,key=f"dr_{i}_{q['q']}")
-            if ans:
-                if ans==q["a"]: st.success("Correct. "+q["e"])
-                else: st.error(f"Correct: {q['a']}. {q['e']}")
-
-elif page == "Exam Review":
-    st.subheader("Remediation")
-    if not st.session_state.submitted or not st.session_state.exam:
-        st.info("Complete and submit a full Practice Exam first. Your misses will appear here.")
+elif page=="5-Chapter Tests":
+    block=st.selectbox("Cumulative block",list(BLOCKS),format_func=lambda b:f"Test {b}: Chapters {BLOCKS[b][0]}–{BLOCKS[b][-1]}")
+    st.subheader(f"50-Question Test — Chapters {BLOCKS[block][0]}–{BLOCKS[block][-1]}")
+    st.caption("Every retake re-samples questions, rotates stems and shuffles choices across these five chapters.")
+    if not st.session_state.block_exam:
+        if st.button("Start 50-Question Test",type="primary",use_container_width=True): build_block(block); st.rerun()
     else:
-        misses=[(i,q) for i,q in enumerate(st.session_state.exam) if st.session_state.answers.get(i)!=q["a"]]
-        st.metric("Questions to remediate",len(misses))
-        domains={}
-        for _,q in misses: domains[q["d"]]=domains.get(q["d"],0)+1
-        if domains: st.bar_chart(domains)
-        for i,q in misses:
-            st.markdown(f"**Q{i+1}: {q['q']}**")
-            st.write(f"Your answer: {st.session_state.answers.get(i,'Unanswered')}")
-            st.success(f"Correct: {q['a']}")
-            st.caption(q["e"])
-            st.divider()
+        if st.button("Generate Fresh Retake",use_container_width=True): build_block(block); st.rerun()
+        render_questions(st.session_state.block_exam,"block_answers","block_submitted",f"b{block}_{st.session_state.block_attempt}")
+        if not st.session_state.block_submitted:
+            if st.button("Submit & Grade",type="primary",use_container_width=True): st.session_state.block_submitted=True; st.rerun()
+        else:
+            s=score(st.session_state.block_exam,st.session_state.block_answers); st.header(f"Score: {s}/50 — {s/50*100:.1f}%")
 
-st.divider()
-st.caption("Original study questions for training purposes. Not copied from or represented as live FINRA exam questions. Exam weighting follows the SIE content breakdown used by the uploaded study manual. Readiness scores are study heuristics, not a guarantee of passing.")
+elif page=="Full Practice Test":
+    st.subheader("75-Question Full SIE Practice Test")
+    st.caption("Weighted to the manual's SIE outline: 12 Capital Markets, 33 Products & Risks, 23 Trading/Accounts/Prohibited Activities, 7 Regulatory Framework.")
+    if not st.session_state.full_exam:
+        if st.button("Start Full Practice Test",type="primary",use_container_width=True): build_full(); st.rerun()
+    else:
+        if st.button("Generate Fresh 75-Question Retake",use_container_width=True): build_full(); st.rerun()
+        st.progress(len(st.session_state.full_answers)/75,text=f"Answered {len(st.session_state.full_answers)} / 75")
+        render_questions(st.session_state.full_exam,"full_answers","full_submitted",f"full{st.session_state.full_attempt}")
+        if not st.session_state.full_submitted:
+            if st.button("Submit Full Test",type="primary",use_container_width=True):
+                st.session_state.full_submitted=True
+                s=score(st.session_state.full_exam,st.session_state.full_answers); st.session_state.history.append(s/75*100); st.rerun()
+        else:
+            s=score(st.session_state.full_exam,st.session_state.full_answers); pct=s/75*100; st.header(f"Score: {s}/75 — {pct:.1f}%")
+            if pct>=85: st.success("Strong readiness margin. Repeat with fresh questions to prove consistency.")
+            elif pct>=70: st.warning("Passing-range practice result, but build more margin before test day.")
+            else: st.error("Below passing range. Review misses, return to chapter decks, then retest.")
+
+elif page=="Review":
+    st.subheader("Performance & remediation")
+    if st.session_state.history: st.line_chart(st.session_state.history)
+    else: st.info("Submit a full practice test to begin tracking full-test performance.")
+    st.markdown("Use each explanation as a retrieval cue. For every miss, return to that chapter's flashcards and complete its 20-question checkpoint before another full simulation.")
+
+st.divider(); st.caption("Original training questions and paraphrased study cards aligned to the uploaded STC SIE manual. They are not copied from or represented as live FINRA exam questions. Practice performance does not guarantee an exam result.")
