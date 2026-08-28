@@ -1,6 +1,6 @@
 """Hard-mode SIE question engine.
 Application scenarios are the primary source. Definition/recognition items remain a minority.
-All questions are original and grounded in the user's study curriculum.
+All production candidates are original clean-room drafts until independently reviewed and approved.
 """
 import random
 import re
@@ -36,7 +36,7 @@ def _cards(ch): return {t:d for t,d in CHAPTERS[ch]["cards"]}
 def _cluster_for(ch,term):
     for cluster in CLUSTERS.get(ch,[]):
         if term in cluster:return cluster
-    terms=list(_cards(ch)); others=[t for t in terms if t!=term]
+    terms=list(_cards(ch));others=[t for t in terms if t!=term]
     return [term]+random.sample(others,min(3,len(others)))
 def _term_choices(ch,term):
     cluster=list(dict.fromkeys(_cluster_for(ch,term)))
@@ -52,16 +52,12 @@ def generate_recall(ch,card,variant=0):
     return enrich({"q":stems[variant%len(stems)],"c":choices,"a":term,"why":f"{term}: {definition}","chapter":ch,"term":term,"style":"recall"})
 
 def build_pool(chapters,variants=12):
-    """Build an application-heavy bank with premium hard items injected first.
-    Cosmetic variants never count as new underlying concepts in the adaptive sampler.
-    """
+    """Build an application-heavy candidate bank. No generated item is treated as human-reviewed by default."""
     pool=[]
     for ch in chapters:
-        pool.extend(enrich(q,"premium-reviewed") for q in premium_for_chapter(ch))
-        pool.extend(enrich(q) for q in expanded_scenarios(ch,max(5,variants//2)))
-        cards=CHAPTERS[ch]["cards"]
-        recall_variants=max(1,variants//8)
+        pool.extend(enrich(q,"premium-draft") for q in premium_for_chapter(ch))
+        pool.extend(enrich(q,"cleanroom-draft") for q in expanded_scenarios(ch,max(5,variants//2)))
+        cards=CHAPTERS[ch]["cards"];recall_variants=max(1,variants//8)
         for i,card in enumerate(cards):
             for v in range(recall_variants):pool.append(generate_recall(ch,card,v+i))
-    random.shuffle(pool)
-    return pool
+    random.shuffle(pool);return pool
