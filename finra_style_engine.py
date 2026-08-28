@@ -1,11 +1,12 @@
 """Hard-mode SIE question engine.
-Application scenarios are the primary source. Definition/recognition items remain a minority
-for factual recall. All questions are original and grounded in the user's study curriculum.
+Application scenarios are the primary source. Definition/recognition items remain a minority.
+All questions are original and grounded in the user's study curriculum.
 """
 import random
 import re
 from curriculum import CHAPTERS
 from scenario_engine import expanded_scenarios
+from question_metadata import enrich
 
 CLUSTERS = {
 1:[["Broker","Dealer","Market Maker","Introducing Firm"],["Primary Market","Secondary Market","Third Market","Fourth Market"],["DTCC","NSCC vs FICC","OCC","Introducing Firm"]],
@@ -47,17 +48,15 @@ def _term_choices(ch,term):
 def generate_recall(ch,card,variant=0):
     term,definition=card;definition=re.sub(r"\s+"," ",definition).strip();choices=_term_choices(ch,term)
     stems=[f"Which term is BEST described by the following: {definition}",f"Which concept MOST directly matches this characteristic: {definition}",f"Which term is MOST closely associated with this rule or characteristic: {definition}"]
-    return {"q":stems[variant%len(stems)],"c":choices,"a":term,"why":f"{term}: {definition}","chapter":ch,"term":term,"style":"recall"}
+    return enrich({"q":stems[variant%len(stems)],"c":choices,"a":term,"why":f"{term}: {definition}","chapter":ch,"term":term,"style":"recall"})
 
 def build_pool(chapters,variants=12):
-    """Build a pool that is intentionally dominated by application/scenario questions.
-    Rough target before sampling: >=75% application items, <=25% recall items.
+    """Build a bank dominated by application/scenario questions.
+    Every item receives commercial metadata, provenance, difficulty and per-option rationales.
     """
     pool=[]
     for ch in chapters:
-        # Scenario items are repeated only through stem variation and answer reshuffling.
-        pool.extend(expanded_scenarios(ch,max(5,variants//2)))
-        # Keep a smaller recall layer so essential terminology is still tested.
+        pool.extend(enrich(q) for q in expanded_scenarios(ch,max(5,variants//2)))
         cards=CHAPTERS[ch]["cards"]
         recall_variants=max(1,variants//6)
         for i,card in enumerate(cards):
