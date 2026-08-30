@@ -9,6 +9,7 @@ from adaptive_exam_engine import balanced_sample, identities
 from weighted_learning import WEIGHTED_SECTIONS, STUDY_METHOD
 from exam_blueprint import BLOCK_TARGETS
 from mastery_engine import record_attempt, readiness_score, daily_plan, chapter_mastery, section_mastery, due_objectives
+from audio_review import render_audio_review
 
 st.set_page_config(page_title="Accelerated SIE Exam",page_icon="🎯",layout="wide")
 st.markdown("""<style>.block-container{max-width:1200px;padding-top:1.2rem}.hero{padding:1.4rem;border-radius:18px;background:linear-gradient(135deg,#101827,#1e3a5f);color:white;margin-bottom:1rem}.big{font-size:2.1rem;font-weight:800}.muted{opacity:.82}.weight{font-size:1.7rem;font-weight:800}</style>""",unsafe_allow_html=True)
@@ -79,8 +80,9 @@ def show_chapter_deep(ch,extra=None):
 
 def show_weighted_learning():
     st.subheader("FINRA-Weighted Learning Plan");st.caption("Higher-weight functions get more explanation, math and practice.")
+    canonical={"Understanding Products and Their Risks":"Products & Risks","Knowledge of Capital Markets":"Capital Markets","Understanding Trading, Customer Accounts and Prohibited Activities":"Trading, Accounts & Prohibited Activities","Overview of Regulatory Framework":"Regulatory Framework"}
     for sec in WEIGHTED_SECTIONS:
-        mastery=section_mastery(st.session_state,sec["name"].replace("Understanding Products and Their Risks","Products & Risks").replace("Knowledge of Capital Markets","Capital Markets").replace("Overview of Regulatory Framework","Regulatory Framework"))
+        mastery=section_mastery(st.session_state,canonical.get(sec["name"],sec["name"]))
         with st.expander(f"{sec['priority']} — {sec['name']} — {sec['weight']}% • mastery {mastery*100:.0f}%",expanded=sec['weight']>=31):
             c1,c2=st.columns([1,3])
             with c1:st.markdown(f"<div class='weight'>{sec['weight']}%</div>",unsafe_allow_html=True);st.write("Chapters: "+", ".join(map(str,sec["chapters"])));st.write(f"Approx. scored questions: {sec['questions']}")
@@ -102,7 +104,7 @@ def show_block(block):
 
 st.markdown('<div class="hero"><div class="big">🎯 Accelerated SIE Exam</div><div class="muted">Blueprint-weighted • adaptive mastery • spaced review • confidence calibration • realistic simulation</div></div>',unsafe_allow_html=True)
 with st.sidebar:
-    st.header("SIE Command Center");page=st.radio("Study mode",["Dashboard","Today's Study Plan","FINRA-Weighted Learning","Chapter Flashcards + Quiz","5-Chapter Study Blocks","Math & Formula Flashcards","75-Question Full Test","Review & Weak Areas"]);st.caption("Readiness target: repeated 85%+ unseen practice performance with low uncertainty.")
+    st.header("SIE Command Center");page=st.radio("Study mode",["Dashboard","🎧 40-Minute Audio Review","Today's Study Plan","FINRA-Weighted Learning","Chapter Flashcards + Quiz","5-Chapter Study Blocks","Math & Formula Flashcards","75-Question Full Test","Review & Weak Areas"]);st.caption("Readiness target: repeated 85%+ unseen practice performance with low uncertainty.")
 
 if page=="Dashboard":
     readiness,parts=readiness_score(st.session_state,st.session_state.history);st.subheader("Readiness Command Center")
@@ -112,6 +114,7 @@ if page=="Dashboard":
     for sec in ["Products & Risks","Trading, Accounts & Prohibited Activities","Capital Markets","Regulatory Framework"]:st.write(f"**{sec}:** {section_mastery(st.session_state,sec)*100:.0f}%")
     st.info("Readiness combines recent full simulations, objective mastery, confidence calibration and coverage. Guessed-correct answers receive reduced mastery credit.")
 
+elif page=="🎧 40-Minute Audio Review":render_audio_review()
 elif page=="Today's Study Plan":
     st.subheader("Today's Adaptive Study Plan");minutes=st.segmented_control("Available time",[15,30,60],default=30,format_func=lambda x:f"{x} min") or 30
     for i,x in enumerate(daily_plan(st.session_state,minutes),1):st.markdown(f"**{i}.** {x}")
@@ -165,7 +168,6 @@ elif page=="75-Question Full Test":
     else:
         st.progress(len(st.session_state.full_answers)/max(1,len(st.session_state.full_exam)),text=f"Answered {len(st.session_state.full_answers)} of {len(st.session_state.full_exam)}");render_questions(st.session_state.full_exam,"full_answers","full_conf","full_submitted",f"full{st.session_state.full_attempt}",exam_mode=True)
         if not st.session_state.full_submitted and st.button("Submit Full Test",type="primary",use_container_width=True):
-            # Exam mode intentionally omits confidence prompts; unanswered confidence is neutral.
             log_results(st.session_state.full_exam,st.session_state.full_answers,st.session_state.full_conf,"full_exam");st.session_state.full_submitted=True;s=score(st.session_state.full_exam,st.session_state.full_answers);st.session_state.history.append(100*s/len(st.session_state.full_exam));st.rerun()
         if st.session_state.full_submitted:
             s=score(st.session_state.full_exam,st.session_state.full_answers);st.header(f"Score: {s}/{len(st.session_state.full_exam)} — {100*s/len(st.session_state.full_exam):.1f}%");st.markdown("### Blueprint breakdown")
@@ -173,8 +175,7 @@ elif page=="75-Question Full Test":
             if st.button("Generate a Different Full Retake"):build_full();st.rerun()
 
 elif page=="Review & Weak Areas":
-    st.subheader("Adaptive Remediation");due=due_objectives(st.session_state);st.metric("Concepts due now",len(due))
-    misses=st.session_state.miss_log
+    st.subheader("Adaptive Remediation");due=due_objectives(st.session_state);st.metric("Concepts due now",len(due));misses=st.session_state.miss_log
     if not misses:st.info("Missed, unsure and guessed questions populate this queue after practice.")
     else:
         counts={}
@@ -186,4 +187,4 @@ elif page=="Review & Weak Areas":
             with st.expander(f"Ch {x['chapter']} • {x['term']} • {x['confidence']}"):
                 st.write(x["question"]);st.success("Correct answer: "+x["answer"]);st.write(x["why"])
 
-st.divider();st.caption("Independent SIE study tool. Lessons are grounded in the uploaded study manual; public FINRA materials inform blueprint weighting and exam-skill design. Not affiliated with or endorsed by FINRA. No proprietary/live exam questions are reproduced.")
+st.divider();st.caption("Independent SIE study tool. Commercial content is being re-authored and reviewed against public regulatory sources under the project's clean-room policy. Not affiliated with or endorsed by FINRA. No proprietary/live exam questions are reproduced.")
